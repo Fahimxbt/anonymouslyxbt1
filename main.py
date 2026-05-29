@@ -20,7 +20,8 @@ promo_sent = False
 sending_lock = asyncio.Lock()
 promo_cancelled = False
 finding_lock = asyncio.Lock()
-stop_pending = False  # NEW: prevents duplicate /stop sends
+chat_ended = False
+finding_timeout_task = None  # NEW: tracks the 10s timeout
 
 
 async def find_sticker():
@@ -49,7 +50,7 @@ async def find_sticker():
 
 
 async def click_find_partner():
-    global match_active, promo_sent, promo_cancelled, stop_pending
+    global match_active, promo_sent, promo_cancelled, chat_ended, finding_timeout_task
     
     if finding_lock.locked():
         print("[*] Already finding partner, skipping...")
@@ -60,7 +61,7 @@ async def click_find_partner():
         
         try:
             for attempt in range(3):
-                msgs = await client.get_messages(bot_entity, limit=5)
+                msgs = await client.get_messages(bot_entity, limit=10)
                 for m in msgs:
                     if not m.reply_markup:
                         continue
@@ -74,7 +75,7 @@ async def click_find_partner():
                                     match_active = False
                                     promo_sent = False
                                     promo_cancelled = False
-                                    stop_pending = False
+                                    chat_ended = False
                                     await asyncio.sleep(3)
                                     return True
                                 except Exception as click_err:
@@ -90,7 +91,7 @@ async def click_find_partner():
             match_active = False
             promo_sent = False
             promo_cancelled = False
-            stop_pending = False
+            chat_ended = False
             await asyncio.sleep(3)
             return True
             
@@ -99,23 +100,33 @@ async def click_find_partner():
             match_active = False
             promo_sent = False
             promo_cancelled = False
-            stop_pending = False
+            chat_ended = False
             await asyncio.sleep(3)
             return True
 
 
-async def send_stop_and_find():
-    global match_active, promo_sent, promo_cancelled, stop_pending
+async def safe_stop_and_find():
+    global match_active, promo_sent, chat_ended
     
-    # NEW: Don't send /stop if partner already ended or we already sent it
-    if not stop_pending:
-        try:
-            await client.send_message(bot_entity, '/stop')
-            print("[→] /stop sent")
-            stop_pending = True
-            await asyncio.sleep(3)
-        except Exception as e:
-            print(f"[!] Stop error: {e}")
+    if chat_ended:
+        print("[*] Chat already ended, skipping /stop")
+        await click_find_partner()
+        return
+    
+    if not match_active:
+        print("[*] No active match, skipping /stop")
+        await click_find_partner()
+        return
+    
+    try:
+        await client.send_message(bot_entity, '/stop')
+        print("[→] /stop sent")
+        chat_ended = True
+        match_active = False
+        promo_sent = False
+        await asyncio.sleep(3)
+    except Exception as e:
+        print(f"[!] Stop error: {e}")
     
     await click_find_partner()
 
@@ -177,9 +188,33 @@ async def send_promo():
             promo_sent = False
 
 
+async def handle_finding_timeout():
+    """
+    Called 10 seconds after 'Finding a partner soon...' appears.
+    If no match started, send /stop and find partner again.
+    """
+    global finding_timeout_task
+    await asyncio.sleep(10)
+    
+    print("[!] Finding timeout! No match after 10 seconds.")
+    
+    # Only act if we're still not in a match
+    if not match_active and not finding_lock.locked():
+        try:
+            await client.send_message(bot_entity, '/stop')
+            print("[→] /stop sent (timeout)")
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"[!] Timeout /stop error: {e}")
+        
+        await click_find_partner()
+    
+    finding_timeout_task = None
+
+
 @client.on(events.NewMessage(chats='@Anonymouslyrobot'))
 async def handler(event):
-    global match_active, promo_sent, promo_cancelled, stop_pending
+    global match_active, promo_sent, promo_cancelled, chat_ended, finding_timeout_task
     
     text = event.text or ''
     
@@ -190,21 +225,15 @@ async def handler(event):
     if 'Your partner ended the chat' in text:
         print("[✓] Partner ended chat")
         
-        # Cancel ongoing promo if active
-        if sending_lock.locked() and not promo_sent:
-            print("[!] Cancelling promo...")
-            promo_cancelled = True
-        
         match_active = False
         promo_sent = False
-        stop_pending = False  # Partner ended it, no need for /stop
+        chat_ended = True
         
-        # CRITICAL FIX: Wait for send_promo() to finish releasing the lock
-        # before trying to find a new partner
         if sending_lock.locked():
+            print("[!] Cancelling promo...")
+            promo_cancelled = True
             print("[*] Waiting for promo to cancel...")
-            # Spin briefly until lock releases
-            for _ in range(30):  # max 3 seconds
+            for _ in range(50):
                 if not sending_lock.locked():
                     break
                 await asyncio.sleep(0.1)
@@ -218,7 +247,7 @@ async def handler(event):
         print("[✓] We left the chat")
         match_active = False
         promo_sent = False
-        stop_pending = False
+        chat_ended = True
         await asyncio.sleep(2)
         await click_find_partner()
         return
@@ -226,7 +255,12 @@ async def handler(event):
     # ========== BOT WELCOME / MENU ==========
     if "I'm an anonymous chat bot" in text:
         print("[*] Bot welcome/menu shown")
-        if not match_active and not finding_lock.locked():
+        if match_active:
+            print("[!] Desync detected: menu shown while match_active=True")
+            match_active = False
+            chat_ended = True
+        
+        if not finding_lock.locked():
             await asyncio.sleep(1)
             await click_find_partner()
         return
@@ -236,7 +270,18 @@ async def handler(event):
         print("[...] Searching for partner...")
         match_active = False
         promo_sent = False
-        stop_pending = False
+        chat_ended = False
+        
+        # Cancel any existing timeout
+        if finding_timeout_task and not finding_timeout_task.done():
+            finding_timeout_task.cancel()
+            try:
+                await finding_timeout_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Start 10-second timeout
+        finding_timeout_task = asyncio.create_task(handle_finding_timeout())
         return
     
     # ========== MATCH STARTED ==========
@@ -245,13 +290,22 @@ async def handler(event):
         match_active = True
         promo_sent = False
         promo_cancelled = False
-        stop_pending = False
+        chat_ended = False
+        
+        # Cancel the finding timeout since we got a match
+        if finding_timeout_task and not finding_timeout_task.done():
+            finding_timeout_task.cancel()
+            try:
+                await finding_timeout_task
+            except asyncio.CancelledError:
+                pass
+            finding_timeout_task = None
         
         await asyncio.sleep(1)
         await send_promo()
         
         if not promo_cancelled:
-            await send_stop_and_find()
+            await safe_stop_and_find()
         else:
             print("[!] Promo cancelled, cleaning up...")
             await asyncio.sleep(1)
@@ -262,13 +316,13 @@ async def handler(event):
     if match_active and not sending_lock.locked():
         if promo_sent:
             print("[!] Partner messaging after promo! Skipping...")
-            await send_stop_and_find()
+            await safe_stop_and_find()
             return
         
         print("[+] Partner sent message/sticker!")
         await send_promo()
         if not promo_cancelled:
-            await send_stop_and_find()
+            await safe_stop_and_find()
         else:
             print("[!] Promo cancelled, finding next...")
             await asyncio.sleep(1)
