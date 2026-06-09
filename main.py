@@ -3,7 +3,7 @@ from telethon.sessions import StringSession
 import asyncio
 
 # ========== CONFIG ==========
-STRING_SESSION = '1BVtsOMcBu6pmRH6qbNbezvvWwc-WllRKklJLYE1TESlv1mU_Qsp3miUNbPlGW1g_l0aZN-eTlxpxXBboXvGo0dBglJDUghtlyAo1tQy5b8AKK2uK1ZoyZdvw3-Ha6VYUrYebTjH765U6_4r1RnGOMhu8Hyg8HyhMZLsU3fUt1FDXnc6zSx0h5WUNiF1w_0uzkRblz7oSboprRatp-UHsPMwGMAamCXQU_iHfETEisHHJCAoS8jOUouHK9ElOFWZveekdlV_4bEaavDTL9ylvRlkgBTBgY8YeSqQtuSqgu5dUo9Vqyy3t4R-Mxm40eCmbNrNFiQ4eeWA8qaFnCvaQJGJIZAuO1U0='
+STRING_SESSION = '1BVtsOHkBu23FcCeX3AcWBnQofZvIebljIRqKw2gg104deHmOiCsgGhB-Yhxg2eJciqmZAdNBx_fLnu3FzY9YwL383GT-N_EQOzKYYSaOO4NzoGu2CO1b7h__KtKRaHzbHlCOnlGfE4IGw4BI225PbkqWvP5U86pLJlhRq8wHpNqpXLUXk3bbbNT249AON3z9gPYjt1f3fBGUnliu6iEEqsldERQfWKNGFtr9qKeFJQHEZ8QTvj8i6LOUNGxUSF4e62ZCuYhddIF9MajHssKQCGXklfU30wm-EzBdO_n1U8Te3vj5NetP6nYs4UZVW6wWf1geDHs4pM29rVI392lR3UY4o5cMj7E='
 API_ID = 31653365
 API_HASH = '46fa4b3be1dd2f89dc84d447cf3fc820'
 # ============================
